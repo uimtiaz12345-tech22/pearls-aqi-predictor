@@ -1,0 +1,13 @@
+{
+    "model_name": "AirSense AQI Forecast Model",
+    "version": "v2",
+    "algorithm": "Random Forest Regressor",
+    "model_file": "models/aqi_forecast_model_v2.pkl",
+    "training_samples": 992,
+    "testing_samples": 249,
+    "MAE": 7.57,
+    "RMSE": 10.47,
+    "R2": 0.729,
+    "forecast_horizon": "3 Days",
+    "registered_at": "2026-08-29 00:42:19"
+}
