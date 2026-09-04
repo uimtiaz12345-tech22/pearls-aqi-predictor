@@ -1,5 +1,9 @@
 # AirSense Karachi — AI-Powered AQI Predictor
 
+## Live Dashboard
+
+[Open AirSense Karachi Dashboard](https://airsense-karachi.streamlit.app/)
+
 AirSense Karachi is an end-to-end machine learning system designed to forecast the Air Quality Index (AQI) in Karachi for the next three days.
 
 ## Project Objective
