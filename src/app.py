@@ -1,16 +1,58 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 import os
-import subprocess
 import sys
+import subprocess
+import html
+import textwrap
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
+
+
+def render_html(content: str):
+    """Render an HTML string, robustly.
+
+    st.markdown(..., unsafe_allow_html=True) runs the text through
+    Streamlit's CommonMark-based markdown parser first, which treats
+    any line indented 4+ spaces as a literal code block instead of
+    HTML -- that's what was showing raw <div> tags on screen. st.html()
+    (available in modern Streamlit) skips the markdown parser and
+    injects the HTML directly, so indentation can't break it. We still
+    dedent the string as a safety net, and fall back to st.markdown for
+    very old Streamlit versions that lack st.html().
+    """
+    dedented = textwrap.dedent(content)
+    try:
+        st.html(dedented)
+    except AttributeError:
+        st.markdown(dedented, unsafe_allow_html=True)
+
+
+def render_svg_chart(chart_html: str, height: int = 360):
+    """
+    Renders chart HTML (produced by svg_line_chart) through an
+    unsanitized iframe instead of st.html().
+
+    st.html() sanitizes everything with DOMPurify before injecting it
+    into the page. Streamlit's DOMPurify configuration strips raw SVG
+    elements (<svg>, <line>, <circle>, <polyline>, <text>) even though
+    it keeps plain <div>/<span> markup -- that's why a chart-card's
+    title/subtitle would show up but the graph itself never appeared.
+    components.html() renders in an iframe with no sanitization, so
+    the SVG survives. `height` should be a bit larger than the SVG's
+    own `height` argument to leave room for the title/subtitle and
+    card padding (roughly svg height + 60px).
+    """
+    components.html(textwrap.dedent(chart_html), height=height, scrolling=False)
+
 
 # ============================================================
 # PATHS
 # ============================================================
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 DATA_DIR = os.path.join(BASE_DIR, "Data")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 SRC_DIR = os.path.join(BASE_DIR, "src")
@@ -20,96 +62,515 @@ HISTORICAL_FILE = os.path.join(DATA_DIR, "historical_aqi.csv")
 SHAP_FILE = os.path.join(DATA_DIR, "shap_feature_importance.png")
 LIVE_FORECAST_FILE = os.path.join(SRC_DIR, "live_forecast.py")
 
+
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
     page_title="AirSense Karachi",
     page_icon="🌤️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
+
 # ============================================================
-# CUSTOM CSS
+# PROFESSIONAL DARK THEME
 # ============================================================
 
-st.markdown("""
+render_html(
+    """
 <style>
 
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-    max-width: 1450px;
+/* ==========================================================
+   GLOBAL
+   ========================================================== */
+
+.stApp {
+    background:
+        radial-gradient(circle at 12% 0%, rgba(34,211,238,0.07), transparent 40%),
+        radial-gradient(circle at 90% 15%, rgba(59,130,246,0.06), transparent 45%),
+        #080b12;
+    color: #f5f7fb;
 }
 
+* {
+    font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.block-container {
+    max-width: 1450px;
+    padding-top: 1.0rem !important;
+    padding-bottom: 3rem !important;
+    padding-left: 2.0rem !important;
+    padding-right: 2.0rem !important;
+}
+
+/* Remove ugly Streamlit top header */
+
+header[data-testid="stHeader"] {
+    background: #080b12 !important;
+    height: 0rem !important;
+}
+/* ---------- FORCE SIDEBAR EXPAND/COLLAPSE CONTROL ---------- */
+
+button[data-testid="stBaseButton-headerNoPadding"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 999999 !important;
+}
+
+button[data-testid="stBaseButton-headerNoPadding"] svg {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+div[data-testid="stToolbar"] {
+    display: none !important;
+}
+
+[data-testid="stDecoration"] {
+    display: none !important;
+}
+
+footer {
+    visibility: hidden;
+}
+
+/* ==========================================================
+   SIDEBAR
+   ========================================================== */
+
+/* ---------- SIDEBAR — FORCE VISIBLE ---------- */
+
+section[data-testid="stSidebar"] {
+    background: #0a0d14 !important;
+    border-right: 1px solid #1d2330 !important;
+
+    width: 255px !important;
+    min-width: 255px !important;
+    max-width: 255px !important;
+
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    margin-left: 0 !important;
+}
+
+/* Force the sidebar content itself to remain visible */
+section[data-testid="stSidebar"] > div {
+    width: 255px !important;
+    min-width: 255px !important;
+    max-width: 255px !important;
+
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+/* Sidebar inner content */
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    width: 255px !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+/* Keep sidebar text visible */
+section[data-testid="stSidebar"] * {
+    color: #dbe3ef !important;
+}
+
+/* Brand */
+.sidebar-brand {
+    font-size: 20px;
+    font-weight: 800;
+    color: #ffffff !important;
+    margin-bottom: 2px;
+}
+
+.sidebar-subtitle {
+    color: #69768a !important;
+    font-size: 11px;
+    margin-bottom: 18px;
+}
+
+section[data-testid="stSidebar"] > div {
+    padding: 1.25rem 1rem !important;
+}
+
+section[data-testid="stSidebar"] * {
+    color: #dce3ee;
+}
+
+.sidebar-brand {
+    font-size: 20px;
+    font-weight: 800;
+    background: linear-gradient(90deg, #ffffff 0%, #7fd8ea 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 3px;
+}
+
+.sidebar-subtitle {
+    font-size: 11px;
+    color: #68758a !important;
+    margin-bottom: 22px;
+}
+
+.sidebar-section {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.3px;
+    text-transform: uppercase;
+    color: #657187 !important;
+    margin-top: 20px;
+    margin-bottom: 8px;
+}
+
+/* Navigation */
+
+div[data-testid="stRadio"] > label {
+    display: none;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] {
+    gap: 5px;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label {
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 0;
+    background: transparent;
+    border: 1px solid transparent;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label:hover {
+    background: #121823;
+    border-color: #202b3b;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label[data-checked="true"] {
+    background: #172131;
+    border-color: #29476c;
+}
+
+/* Hide radio circles */
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child {
+    display: none;
+}
+
+/* Sidebar button */
+
+section[data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    background: #123f73;
+    color: white;
+    border: 1px solid #285c91;
+    border-radius: 8px;
+    font-weight: 700;
+    min-height: 38px;
+}
+
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: #18548f;
+}
+
+/* ==========================================================
+   TITLES
+   ========================================================== */
+
 .main-title {
-    font-size: 42px;
-    font-weight: 750;
-    margin-bottom: 0px;
+    color: #ffffff;
+    font-size: 34px;
+    line-height: 1.1;
+    font-weight: 850;
+    margin: 0;
 }
 
 .main-subtitle {
-    font-size: 17px;
-    color: #6b7280;
-    margin-bottom: 25px;
+    color: #78869b;
+    font-size: 14px;
+    margin-top: 6px;
+    margin-bottom: 22px;
 }
 
 .section-title {
-    font-size: 28px;
-    font-weight: 700;
-    margin-top: 30px;
-    margin-bottom: 15px;
+    color: #f5f7fb;
+    font-size: 20px;
+    font-weight: 800;
+    margin-top: 24px;
+    margin-bottom: 11px;
+    padding-left: 11px;
+    border-left: 3px solid #22d3ee;
 }
 
-.small-text {
-    color: #6b7280;
-    font-size: 14px;
+/* ==========================================================
+   GENERAL CARDS
+   ========================================================== */
+
+.card {
+    background: linear-gradient(165deg, #171c27 0%, #12151d 100%);
+    border: 1px solid #252c39;
+    border-radius: 13px;
+    padding: 18px;
+    box-sizing: border-box;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
+
+.card:hover {
+    border-color: #355d8c;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+}
+
+.card-label {
+    color: #7e8a9e;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.card-title {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 750;
+}
+
+.big-value {
+    background: linear-gradient(90deg, #ffffff 0%, #b7c3d6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 34px;
+    font-weight: 850;
+    line-height: 1;
+    margin-top: 8px;
+}
+
+.card-note {
+    color: #748197;
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+/* ==========================================================
+   AQI HERO
+   ========================================================== */
+
+.aqi-hero {
+    background: linear-gradient(165deg, #171c27 0%, #10131b 100%);
+    border: 1px solid #252c39;
+    border-radius: 14px;
+    padding: 22px 20px 20px 20px;
+    text-align: center;
+    min-height: 310px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+.aqi-hero-title {
+    color: #ffffff;
+    font-size: 19px;
+    font-weight: 800;
+}
+
+.aqi-circle {
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    margin: 18px auto 13px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 7px solid rgba(255,255,255,0.05);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 40px 4px currentColor;
+    opacity: 0.97;
+}
+
+.aqi-number {
+    color: #ffffff;
+    font-size: 54px;
+    line-height: 1;
+    font-weight: 900;
+}
+
+.aqi-status {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.aqi-date {
+    color: #748197;
+    font-size: 11px;
+    margin-top: 5px;
+}
+
+/* ==========================================================
+   FORECAST
+   ========================================================== */
 
 .forecast-card {
-    padding: 20px;
-    border: 1px solid #d9dee7;
-    border-radius: 12px;
-    background-color: #ffffff;
-    min-height: 190px;
+    background: linear-gradient(165deg, #171c27 0%, #12151d 100%);
+    border: 1px solid #252c39;
+    border-radius: 13px;
+    padding: 18px;
+    min-height: 155px;
+    transition: 0.18s ease;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+
+.forecast-card:hover {
+    border-color: #355d8c;
+    transform: translateY(-3px);
+    box-shadow: 0 12px 26px rgba(0,0,0,0.4);
 }
 
 .forecast-day {
-    font-size: 20px;
-    font-weight: 650;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 800;
 }
 
 .forecast-date {
-    color: #6b7280;
-    font-size: 14px;
+    color: #718097;
+    font-size: 11px;
+    margin-top: 3px;
 }
 
 .forecast-aqi {
-    font-size: 38px;
-    font-weight: 750;
-    margin-top: 15px;
+    color: #ffffff;
+    font-size: 35px;
+    line-height: 1;
+    font-weight: 900;
+    margin-top: 17px;
 }
 
-.footer {
-    text-align: center;
-    color: #6b7280;
+.forecast-category {
+    color: #aeb8c7;
+    font-size: 12px;
+    margin-top: 7px;
+}
+
+/* ==========================================================
+   ALERT
+   ========================================================== */
+
+.alert-card {
+    background: linear-gradient(165deg, #1a1520 0%, #12151d 100%);
+    border: 1px solid #2c2739;
+    border-radius: 13px;
+    padding: 19px;
+    min-height: 155px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+
+.alert-title {
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.alert-text {
+    color: #aeb8c7;
     font-size: 13px;
-    margin-top: 50px;
-    padding-top: 20px;
-    border-top: 1px solid #e5e7eb;
+    line-height: 1.6;
+    margin-top: 10px;
+}
+
+/* ==========================================================
+   CHART
+   ========================================================== */
+
+.chart-card {
+    background: linear-gradient(165deg, #171c27 0%, #12151d 100%);
+    border: 1px solid #252c39;
+    border-radius: 13px;
+    padding: 15px 15px 8px 15px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+
+.chart-title {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.chart-subtitle {
+    color: #718097;
+    font-size: 11px;
+    margin-top: 3px;
+}
+
+/* ==========================================================
+   TABLES
+   ========================================================== */
+
+div[data-testid="stDataFrame"] {
+    border: 1px solid #252c39;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* ==========================================================
+   EXPANDERS
+   ========================================================== */
+
+div[data-testid="stExpander"] {
+    background: #11151e;
+    border: 1px solid #252c39;
+    border-radius: 10px;
+}
+
+/* ==========================================================
+   INFO / SUCCESS / ERROR
+   ========================================================== */
+
+div[data-testid="stAlert"] {
+    border-radius: 9px;
+}
+
+/* ==========================================================
+   MOBILE
+   ========================================================== */
+
+@media (max-width: 900px) {
+
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        min-width: 220px !important;
+        max-width: 220px !important;
+    }
+
+    .main-title {
+        font-size: 28px;
+    }
+
 }
 
 </style>
-""", unsafe_allow_html=True)
+"""
+)
+
 
 # ============================================================
 # AQI FUNCTIONS
 # ============================================================
 
 def aqi_category(aqi):
-
     if aqi <= 50:
         return "Good"
     elif aqi <= 100:
@@ -120,12 +581,24 @@ def aqi_category(aqi):
         return "Unhealthy"
     elif aqi <= 300:
         return "Very Unhealthy"
-    else:
-        return "Hazardous"
+    return "Hazardous"
+
+
+def aqi_color(aqi):
+    if aqi <= 50:
+        return "#10b981"
+    elif aqi <= 100:
+        return "#eab308"
+    elif aqi <= 150:
+        return "#f97316"
+    elif aqi <= 200:
+        return "#ef4444"
+    elif aqi <= 300:
+        return "#8b5cf6"
+    return "#111827"
 
 
 def aqi_emoji(aqi):
-
     if aqi <= 50:
         return "🟢"
     elif aqi <= 100:
@@ -136,83 +609,386 @@ def aqi_emoji(aqi):
         return "🔴"
     elif aqi <= 300:
         return "🟣"
-    else:
-        return "⚫"
+    return "⚫"
 
 
 def health_message(aqi):
-
     if aqi <= 50:
-        return (
-            "Air quality is good. Air pollution poses little "
-            "or no risk."
-        )
-
+        return "Air quality is good and poses little or no health risk."
     elif aqi <= 100:
-        return (
-            "Air quality is acceptable. Sensitive individuals "
-            "may experience minor effects."
-        )
-
+        return "Air quality is acceptable. Sensitive individuals may experience minor effects."
     elif aqi <= 150:
-        return (
-            "Sensitive groups should consider reducing prolonged "
-            "or heavy outdoor activity."
-        )
-
+        return "Sensitive groups should consider reducing prolonged or heavy outdoor activity."
     elif aqi <= 200:
-        return (
-            "Everyone may begin to experience health effects. "
-            "Sensitive groups may experience more serious effects."
-        )
-
+        return "Everyone may begin to experience health effects."
     elif aqi <= 300:
-        return (
-            "Health alert: the risk of health effects is increased "
-            "for everyone."
+        return "Health alert: the risk of health effects is increased for everyone."
+    return "Health emergency: hazardous air-quality conditions are expected."
+
+
+def find_numeric_column(df, names):
+
+    for name in names:
+
+        if name in df.columns:
+
+            values = pd.to_numeric(
+                df[name],
+                errors="coerce"
+            )
+
+            if values.notna().any():
+                return name
+
+    return None
+
+
+def fmt_value(value, suffix=""):
+
+    if value is None:
+        return "—"
+
+    try:
+
+        if pd.isna(value):
+            return "—"
+
+        return f"{float(value):.1f}{suffix}"
+
+    except Exception:
+        return "—"
+
+
+def safe_text(value):
+    return html.escape(str(value))
+
+
+# ============================================================
+# PROFESSIONAL LINE CHART
+# ============================================================
+
+def svg_line_chart(
+    values,
+    labels,
+    title="AQI Trend",
+    subtitle="Forecast trajectory",
+    width=900,
+    height=300
+):
+
+    clean_values = []
+
+    clean_labels = []
+
+    for value, label in zip(values, labels):
+
+        try:
+
+            value = float(value)
+
+            if np.isfinite(value):
+
+                clean_values.append(value)
+                clean_labels.append(str(label))
+
+        except Exception:
+            pass
+
+    if len(clean_values) < 2:
+
+        return textwrap.dedent("""
+        <html><head><style>html,body{margin:0;padding:0;background:transparent;}</style></head>
+        <body>
+        <div style="
+            background: linear-gradient(165deg, #171c27 0%, #12151d 100%);
+            border: 1px solid #252c39;
+            border-radius: 13px;
+            padding: 15px 15px 8px 15px;
+            box-sizing: border-box;
+            font-family: Inter, 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+        ">
+            <div style="color:#ffffff;font-size:15px;font-weight:800;">AQI Trend</div>
+            <div style="color:#718097;font-size:11px;margin-top:3px;">
+                Not enough observations available.
+            </div>
+        </div>
+        </body></html>
+        """)
+
+    values = clean_values
+    labels = clean_labels
+
+    n = len(values)
+
+    left = 55
+    right = 25
+    top = 25
+    bottom = 48
+
+    chart_width = width - left - right
+    chart_height = height - top - bottom
+
+    minimum = min(values)
+    maximum = max(values)
+
+    padding = max((maximum - minimum) * 0.20, 5)
+
+    ymin = max(0, minimum - padding)
+    ymax = maximum + padding
+
+    def x_pos(i):
+
+        return left + (
+            chart_width * i / max(n - 1, 1)
         )
 
-    else:
-        return (
-            "Health emergency: hazardous air quality conditions "
-            "are expected."
-        )
+    def y_pos(value):
 
+        return top + chart_height - (
+            (value - ymin)
+            / max(ymax - ymin, 1)
+        ) * chart_height
 
-def show_aqi_alert(aqi):
-
-    category = aqi_category(aqi)
-    emoji = aqi_emoji(aqi)
-    message = health_message(aqi)
-
-    text = (
-        f"**{emoji} {category} — Forecast AQI: {aqi:.0f}**\n\n"
-        f"{message}"
+    points = " ".join(
+        f"{x_pos(i):.1f},{y_pos(value):.1f}"
+        for i, value in enumerate(values)
     )
 
-    if aqi <= 100:
-        st.success(text)
-    elif aqi <= 150:
-        st.warning(text)
-    else:
-        st.error(text)
+    grid = []
+    grid_labels = []
+
+    for i in range(5):
+
+        grid_value = ymin + (
+            (ymax - ymin) * i / 4
+        )
+
+        y = y_pos(grid_value)
+
+        grid.append(
+            f"""
+            <line
+                x1="{left}"
+                y1="{y:.1f}"
+                x2="{width-right}"
+                y2="{y:.1f}"
+                stroke="#252c39"
+                stroke-width="1"
+            />
+            """
+        )
+
+        grid_labels.append(
+            f"""
+            <text
+                x="{left-8}"
+                y="{y+4:.1f}"
+                text-anchor="end"
+                fill="#657286"
+                font-size="10"
+            >
+                {grid_value:.0f}
+            </text>
+            """
+        )
+
+    xlabels = []
+
+    for i, label in enumerate(labels):
+
+        if i == 0 or i == n - 1 or n <= 4:
+
+            xlabels.append(
+                f"""
+                <text
+                    x="{x_pos(i):.1f}"
+                    y="{height-14}"
+                    text-anchor="middle"
+                    fill="#657286"
+                    font-size="10"
+                >
+                    {safe_text(label)}
+                </text>
+                """
+            )
+
+    circles = []
+
+    for i, value in enumerate(values):
+
+        circles.append(
+            f"""
+            <circle
+                cx="{x_pos(i):.1f}"
+                cy="{y_pos(value):.1f}"
+                r="4"
+                fill="#151922"
+                stroke="#22d3ee"
+                stroke-width="2"
+            />
+            """
+        )
+
+    return textwrap.dedent(f"""
+    <html><head><style>html,body{{margin:0;padding:0;background:transparent;}}</style></head>
+    <body>
+    <div style="
+        background: linear-gradient(165deg, #171c27 0%, #12151d 100%);
+        border: 1px solid #252c39;
+        border-radius: 13px;
+        padding: 15px 15px 8px 15px;
+        box-sizing: border-box;
+        font-family: Inter, 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    ">
+
+        <div style="color:#ffffff;font-size:15px;font-weight:800;">
+            {safe_text(title)}
+        </div>
+
+        <div style="color:#718097;font-size:11px;margin-top:3px;">
+            {safe_text(subtitle)}
+        </div>
+
+        <svg
+            viewBox="0 0 {width} {height}"
+            width="{width}"
+            height="{height}"
+            preserveAspectRatio="xMidYMid meet"
+            style="display:block; width:100%; height:{height}px; max-width:100%;"
+            role="img"
+        >
+
+            {''.join(grid)}
+
+            {''.join(grid_labels)}
+
+            <polyline
+                points="{points}"
+                fill="none"
+                stroke="#22d3ee"
+                stroke-width="3"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            />
+
+            {''.join(circles)}
+
+            {''.join(xlabels)}
+
+        </svg>
+
+    </div>
+    </body></html>
+    """)
 
 
 # ============================================================
-# HEADER
+# LOAD FORECAST
 # ============================================================
 
-st.markdown(
-    '<div class="main-title">🌤️ AirSense Karachi</div>',
-    unsafe_allow_html=True
+if not os.path.exists(FORECAST_FILE):
+
+    st.error("Forecast results were not found.")
+
+    st.info(
+        "Run src/live_forecast.py first, or use "
+        "Refresh Forecast in the sidebar."
+    )
+
+    st.stop()
+
+
+try:
+
+    forecast = pd.read_csv(
+        FORECAST_FILE
+    )
+
+except Exception as exc:
+
+    st.error(
+        f"Could not read forecast_results.csv: {exc}"
+    )
+
+    st.stop()
+
+
+required_columns = [
+    "Date",
+    "Predicted AQI"
+]
+
+
+missing_columns = [
+    column
+    for column in required_columns
+    if column not in forecast.columns
+]
+
+
+if missing_columns:
+
+    st.error(
+        "forecast_results.csv is missing: "
+        + ", ".join(missing_columns)
+    )
+
+    st.stop()
+
+
+forecast["Date"] = pd.to_datetime(
+    forecast["Date"],
+    errors="coerce"
 )
 
-st.markdown(
-    '<div class="main-subtitle">'
-    'AI-powered 3-day Air Quality Index forecasting system'
-    '</div>',
-    unsafe_allow_html=True
+forecast["Predicted AQI"] = pd.to_numeric(
+    forecast["Predicted AQI"],
+    errors="coerce"
 )
+
+
+forecast = (
+    forecast
+    .dropna(
+        subset=[
+            "Date",
+            "Predicted AQI"
+        ]
+    )
+    .sort_values("Date")
+    .reset_index(drop=True)
+)
+
+
+# ============================================================
+# KARACHI DATE LOGIC
+# ============================================================
+
+karachi_now = pd.Timestamp.now(
+    tz="Asia/Karachi"
+)
+
+today = (
+    karachi_now
+    .normalize()
+    .tz_localize(None)
+)
+
+tomorrow = (
+    today
+    + pd.Timedelta(days=1)
+)
+
+
+future_forecast = (
+    forecast[
+        forecast["Date"] >= tomorrow
+    ]
+    .sort_values("Date")
+    .head(3)
+    .copy()
+)
+
 
 # ============================================================
 # SIDEBAR
@@ -220,45 +996,57 @@ st.markdown(
 
 with st.sidebar:
 
-    st.markdown("## 🌤️ AirSense Karachi")
-    st.markdown("---")
+    render_html(
+        """
+        <div class="sidebar-brand">
+            🛡️ AirSense Karachi
+        </div>
+        """
+)
 
-    st.markdown("### Navigation")
+    render_html(
+        """
+        <div class="sidebar-subtitle">
+            AI-powered air-quality intelligence
+        </div>
+        """
+)
+
+    render_html(
+        '<div class="sidebar-section">Navigation</div>'
+)
 
     page = st.radio(
-        "Go to",
+        "Navigation",
         [
             "Dashboard",
             "Model Performance",
             "Model Explainability",
             "Project Information"
-        ]
+        ],
+        label_visibility="collapsed"
     )
 
-    st.markdown("---")
+    render_html(
+        '<div class="sidebar-section">System</div>'
+)
 
-    st.markdown("### System")
+    st.caption("📍 Karachi, Pakistan")
+    st.caption("🔮 3-day AQI forecasting")
+    st.caption("🤖 Random Forest")
+    st.caption("🧠 SHAP explainability")
 
-    st.write("📍 Location: Karachi, Pakistan")
-    st.write("🔮 Forecast: Next 3 Days")
-    st.write("🤖 Model: Random Forest")
-    st.write("🧠 Explainability: SHAP")
-
-    st.markdown("---")
-
-    # ========================================================
-    # LIVE REFRESH
-    # ========================================================
-
-    st.markdown("### 🔄 Live Forecast")
+    render_html(
+        '<div class="sidebar-section">Live Forecast</div>'
+)
 
     if st.button(
-        "Refresh Forecast",
+        "↻  Refresh Forecast",
         use_container_width=True
     ):
 
         with st.spinner(
-            "Collecting latest weather and air-quality data..."
+            "Updating Karachi forecast..."
         ):
 
             try:
@@ -270,7 +1058,8 @@ with st.sidebar:
                     ],
                     cwd=BASE_DIR,
                     capture_output=True,
-                    text=True
+                    text=True,
+                    timeout=180
                 )
 
                 if result.returncode == 0:
@@ -287,334 +1076,657 @@ with st.sidebar:
                         "Forecast update failed."
                     )
 
-                    st.code(
-                        result.stderr
-                    )
+                    if result.stderr:
+                        st.code(
+                            result.stderr
+                        )
 
-            except Exception as e:
+            except subprocess.TimeoutExpired:
 
                 st.error(
-                    f"Could not run live forecast: {e}"
+                    "Forecast update timed out."
                 )
 
+            except Exception as exc:
+
+                st.error(
+                    f"Could not run forecast: {exc}"
+                )
+
+    st.markdown("---")
+
+    st.caption("AirSense Karachi")
+    st.caption("Automated forecasting • Streamlit")
+
 
 # ============================================================
-# LOAD FORECAST
+# IF NO FUTURE FORECAST
 # ============================================================
 
-if not os.path.exists(FORECAST_FILE):
+if len(future_forecast) < 3:
+
+    render_html(
+        '<div class="main-title">Dashboard</div>'
+)
+
+    render_html(
+        '<div class="main-subtitle">'
+        'Live Karachi air-quality monitoring and 3-day AQI forecasting'
+        '</div>'
+)
 
     st.error(
-        "Forecast results were not found."
+        f"Only {len(future_forecast)} future forecast day(s) "
+        "are currently available."
     )
 
     st.info(
-        "Run live_forecast.py first or use the Refresh Forecast "
-        "button in the sidebar."
+        f"Today is {today.strftime('%d %B %Y')}. "
+        "Click **Refresh Forecast** in the sidebar to generate "
+        "the next three future dates."
     )
 
     st.stop()
 
 
-forecast = pd.read_csv(
-    FORECAST_FILE
-)
-
-forecast["Date"] = pd.to_datetime(
-    forecast["Date"],
-    errors="coerce"
-)
-
-forecast["Predicted AQI"] = pd.to_numeric(
-    forecast["Predicted AQI"],
-    errors="coerce"
-)
-
-forecast = forecast.dropna(
-    subset=[
-        "Date",
-        "Predicted AQI"
-    ]
-)
-
-forecast = forecast.sort_values(
-    "Date"
-).reset_index(drop=True)
-
 # ============================================================
-# CRITICAL DATE LOGIC
-# ============================================================
-# Never hardcode dates.
-# Always use the next three dates contained in forecast_results.
-
-today = pd.Timestamp.now(
-    tz="Asia/Karachi"
-).normalize().tz_localize(None)
-
-future_forecast = forecast[
-    forecast["Date"] > today
-].copy()
-
-future_forecast = future_forecast.head(3)
-
-# ============================================================
-# SAFETY FALLBACK
-# ============================================================
-
-if len(future_forecast) < 3:
-
-    # If the CSV already contains exactly 3 forecast rows,
-    # use them rather than showing an incomplete dashboard.
-
-    if len(forecast) >= 3:
-
-        future_forecast = forecast.head(3).copy()
-
-    else:
-
-        st.error(
-            "Less than three forecast days are available."
-        )
-
-        st.stop()
-
-
-# ============================================================
-# PAGE 1 — DASHBOARD
+# DASHBOARD
 # ============================================================
 
 if page == "Dashboard":
 
-    st.markdown(
-        '<div class="section-title">'
-        '🌫️ Air Quality Overview'
-        '</div>',
-        unsafe_allow_html=True
+    render_html(
+        '<div class="main-title">Dashboard</div>'
+)
+
+    render_html(
+        '<div class="main-subtitle">'
+        'Live Karachi air-quality monitoring and 3-day AQI forecasting'
+        '</div>'
+)
+
+    # --------------------------------------------------------
+    # KEY VALUES
+    # --------------------------------------------------------
+
+    tomorrow_row = future_forecast.iloc[0]
+
+    tomorrow_aqi = float(
+        tomorrow_row["Predicted AQI"]
     )
 
-    tomorrow_aqi = future_forecast.iloc[0]["Predicted AQI"]
-    tomorrow_date = future_forecast.iloc[0]["Date"]
-
-    worst_aqi = future_forecast[
-        "Predicted AQI"
-    ].max()
+    worst_idx = (
+        future_forecast["Predicted AQI"]
+        .idxmax()
+    )
 
     worst_row = future_forecast.loc[
-        future_forecast["Predicted AQI"].idxmax()
+        worst_idx
     ]
 
-    latest_forecast_date = future_forecast[
-        "Date"
-    ].max()
+    worst_aqi = float(
+        worst_row["Predicted AQI"]
+    )
 
-    # ========================================================
-    # TOP METRICS
-    # ========================================================
+    # --------------------------------------------------------
+    # SECONDARY METRICS
+    # --------------------------------------------------------
+    # forecast_results.csv only has [Date, Predicted AQI] and
+    # historical_aqi.csv only has [Date, Average AQI] -- there is
+    # no PM2.5 / PM10 / temperature / humidity anywhere in the
+    # pipeline yet. Rather than show permanent placeholder dashes,
+    # these three cards use real numbers derived from the AQI data
+    # that actually exists. To get real pollutant/weather cards
+    # back, the upstream data-collection step (src/live_forecast.py
+    # or whatever builds these CSVs) needs to save those columns.
 
-    col1, col2, col3, col4 = st.columns(4)
+    latest_hist_aqi = None
+    hist_avg_7d = None
 
-    with col1:
+    if os.path.exists(HISTORICAL_FILE):
 
-        st.metric(
-            "Tomorrow's AQI",
-            f"{tomorrow_aqi:.0f}"
-        )
+        try:
 
-        st.caption(
-            f"{aqi_emoji(tomorrow_aqi)} "
-            f"{aqi_category(tomorrow_aqi)}"
-        )
+            hist_env = pd.read_csv(HISTORICAL_FILE)
 
-    with col2:
-
-        st.metric(
-            "Forecast Horizon",
-            "3 Days"
-        )
-
-        st.caption(
-            "Automatic daily predictions"
-        )
-
-    with col3:
-
-        st.metric(
-            "Location",
-            "Karachi"
-        )
-
-        st.caption(
-            "Pakistan"
-        )
-
-    with col4:
-
-        st.metric(
-            "Forecast Through",
-            latest_forecast_date.strftime(
-                "%d %b"
+            hist_col = find_numeric_column(
+                hist_env,
+                ["Average AQI", "AQI", "aqi", "Air Quality Index"]
             )
+
+            if hist_col:
+
+                hist_series = pd.to_numeric(
+                    hist_env[hist_col],
+                    errors="coerce"
+                ).dropna()
+
+                if not hist_series.empty:
+
+                    latest_hist_aqi = hist_series.iloc[-1]
+                    hist_avg_7d = hist_series.tail(7).mean()
+
+        except Exception:
+
+            pass
+
+    forecast_trend_delta = (
+        worst_row["Predicted AQI"] - tomorrow_row["Predicted AQI"]
+        if len(future_forecast) >= 2
+        else 0.0
+    )
+
+    if forecast_trend_delta > 3:
+        trend_label = "Worsening"
+        trend_arrow = "▲"
+    elif forecast_trend_delta < -3:
+        trend_label = "Improving"
+        trend_arrow = "▼"
+    else:
+        trend_label = "Stable"
+        trend_arrow = "●"
+
+    vs_latest_delta = (
+        tomorrow_aqi - latest_hist_aqi
+        if latest_hist_aqi is not None
+        else None
+    )
+
+    # ========================================================
+    # TOP SECTION
+    # ========================================================
+
+    hero_col, metrics_col = st.columns(
+        [1.05, 2.2],
+        gap="medium"
+    )
+
+    with hero_col:
+
+        color = aqi_color(
+            tomorrow_aqi
         )
 
-        st.caption(
-            "Latest predicted date"
+        # IMPORTANT:
+        # st.html prevents Streamlit from displaying
+        # the HTML source as plain text.
+
+        hero_html = f"""
+        <div class="aqi-hero">
+
+            <div class="aqi-hero-title">
+                Air Quality Index
+            </div>
+
+            <div
+                class="aqi-circle"
+                style="background:{color}; color:{color};"
+            >
+                <div class="aqi-number">
+                    {tomorrow_aqi:.0f}
+                </div>
+            </div>
+
+            <div class="aqi-status">
+                {safe_text(
+                    aqi_category(tomorrow_aqi)
+                )}
+            </div>
+
+            <div class="aqi-date">
+                Forecast for
+                {tomorrow_row["Date"].strftime("%d %B %Y")}
+            </div>
+
+        </div>
+        """
+
+        hero_html = textwrap.dedent(hero_html)
+
+        try:
+
+            st.html(hero_html)
+
+        except AttributeError:
+
+            # Compatibility fallback for older Streamlit
+
+            st.markdown(hero_html, unsafe_allow_html=True)
+
+    with metrics_col:
+
+        m1, m2, m3 = st.columns(
+            3,
+            gap="small"
         )
 
+        with m1:
+
+            render_html(
+                f"""
+                <div class="card">
+
+                    <div class="card-label">
+                        Latest Observed AQI
+                    </div>
+
+                    <div class="big-value">
+                        {fmt_value(latest_hist_aqi)}
+                    </div>
+
+                    <div class="card-note">
+                        most recent historical reading
+                    </div>
+
+                </div>
+                """
+)
+
+        with m2:
+
+            render_html(
+                f"""
+                <div class="card">
+
+                    <div class="card-label">
+                        7-Day Avg AQI
+                    </div>
+
+                    <div class="big-value">
+                        {fmt_value(hist_avg_7d)}
+                    </div>
+
+                    <div class="card-note">
+                        trailing week, historical data
+                    </div>
+
+                </div>
+                """
+)
+
+        with m3:
+
+            render_html(
+                f"""
+                <div class="card">
+
+                    <div class="card-label">
+                        3-Day Trend
+                    </div>
+
+                    <div class="big-value" style="font-size:26px;">
+                        {trend_arrow} {safe_text(trend_label)}
+                    </div>
+
+                    <div class="card-note">
+                        tomorrow vs. worst forecast day
+                    </div>
+
+                </div>
+                """
+)
+
+        render_html(
+            "<div style='height:9px'></div>"
+)
+
+        render_html(
+            f"""
+            <div class="card">
+
+                <div class="card-title">
+                    Forecast vs. Latest Observed
+                </div>
+
+                <div class="big-value">
+                    {
+                        (
+                            f"{vs_latest_delta:+.1f}"
+                            if vs_latest_delta is not None
+                            else "—"
+                        )
+                    }
+                </div>
+
+                <div class="card-note">
+                    {
+                        (
+                            "AQI points higher than the latest observed reading"
+                            if vs_latest_delta is not None and vs_latest_delta > 0
+                            else "AQI points lower than the latest observed reading"
+                            if vs_latest_delta is not None
+                            else "No historical AQI available to compare against"
+                        )
+                    }
+                </div>
+
+            </div>
+            """
+)
+
     # ========================================================
-    # LIVE STATUS
+    # LATEST ALERT
     # ========================================================
 
-    st.info(
-        f"📅 Forecast generated for "
-        f"{future_forecast.iloc[0]['Date'].strftime('%d %b %Y')} "
-        f"to "
-        f"{future_forecast.iloc[-1]['Date'].strftime('%d %b %Y')}."
+    render_html(
+        '<div class="section-title">Latest Alert</div>'
+)
+
+    alert_col, summary_col = st.columns(
+        [1.7, 1],
+        gap="medium"
     )
 
+    with alert_col:
+
+        render_html(
+            f"""
+            <div class="alert-card">
+
+                <div class="alert-title">
+
+                    <span
+                        style="
+                        color:{aqi_color(worst_aqi)};
+                        font-size:18px;
+                        "
+                    >
+                        ●
+                    </span>
+
+                    {aqi_emoji(worst_aqi)}
+                    {safe_text(
+                        aqi_category(worst_aqi)
+                    )}
+
+                </div>
+
+                <div class="alert-text">
+
+                    The highest predicted AQI over
+                    the next three days is
+
+                    <b style="color:#ffffff;">
+                        {worst_aqi:.0f}
+                    </b>
+
+                    expected on
+
+                    <b style="color:#ffffff;">
+                        {worst_row["Date"].strftime(
+                            "%d %B %Y"
+                        )}
+                    </b>.
+
+                    <br><br>
+
+                    {safe_text(
+                        health_message(worst_aqi)
+                    )}
+
+                </div>
+
+            </div>
+            """
+)
+
+    with summary_col:
+
+        render_html(
+            f"""
+            <div class="card">
+
+                <div class="card-label">
+                    Forecast Horizon
+                </div>
+
+                <div class="big-value">
+                    3
+                    <span
+                        style="
+                        font-size:15px;
+                        color:#7d899c;
+                        "
+                    >
+                        days
+                    </span>
+                </div>
+
+                <div class="card-note">
+                    Through
+                    {future_forecast["Date"].max().strftime(
+                        "%d %b %Y"
+                    )}
+                </div>
+
+            </div>
+            """
+)
+
     # ========================================================
-    # HEALTH ALERT
+    # 3 DAY FORECAST
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">'
-        '🚨 Air Quality Health Alert'
-        '</div>',
-        unsafe_allow_html=True
+    render_html(
+        '<div class="section-title">3-Day AQI Forecast</div>'
+)
+
+    forecast_cols = st.columns(
+        3,
+        gap="medium"
     )
 
-    st.write(
-        f"The highest predicted AQI during the forecast "
-        f"period is **{worst_aqi:.0f}**, expected on "
-        f"**{worst_row['Date'].strftime('%d %b %Y')}**."
-    )
-
-    show_aqi_alert(
-        worst_aqi
-    )
-
-    # ========================================================
-    # 3-DAY FORECAST
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">'
-        '📅 3-Day AQI Forecast'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    cols = st.columns(3)
-
-    for i, col in enumerate(cols):
+    for i, col in enumerate(
+        forecast_cols
+    ):
 
         row = future_forecast.iloc[i]
 
-        date = row["Date"]
-        aqi = row["Predicted AQI"]
+        aqi = float(
+            row["Predicted AQI"]
+        )
 
         if i == 0:
             day_label = "Tomorrow"
+        elif i == 1:
+            day_label = "Day +2"
         else:
-            day_label = f"Day +{i + 1}"
+            day_label = "Day +3"
 
         with col:
 
-            st.markdown(
+            render_html(
                 f"""
                 <div class="forecast-card">
 
-                <div class="forecast-day">
-                    {day_label}
-                </div>
+                    <div class="forecast-day">
+                        {day_label}
+                    </div>
 
-                <div class="forecast-date">
-                    {date.strftime("%d %B %Y")}
-                </div>
+                    <div class="forecast-date">
+                        {row["Date"].strftime(
+                            "%d %B %Y"
+                        )}
+                    </div>
 
-                <div class="forecast-aqi">
-                    {aqi:.0f}
-                </div>
+                    <div
+                        class="forecast-aqi"
+                        style="color:#ffffff;"
+                    >
+                        {aqi:.0f}
+                    </div>
 
-                <div>
-                    {aqi_emoji(aqi)}
-                    <b>{aqi_category(aqi)}</b>
-                </div>
+                    <div class="forecast-category">
+
+                        <span
+                            style="
+                            color:{aqi_color(aqi)};
+                            "
+                        >
+                            ●
+                        </span>
+
+                        <b>
+                            {safe_text(
+                                aqi_category(aqi)
+                            )}
+                        </b>
+
+                    </div>
 
                 </div>
-                """,
-                unsafe_allow_html=True
+                """
+)
+
+    # ========================================================
+    # TREND
+    # ========================================================
+
+    render_html(
+        '<div class="section-title">AQI Trend & Alerts</div>'
+)
+
+    trend_col, alerts_col = st.columns(
+        [2.1, 1],
+        gap="medium"
+    )
+
+    with trend_col:
+
+        labels = [
+            date.strftime("%d %b")
+            for date in future_forecast["Date"]
+        ]
+
+        values = (
+            future_forecast[
+                "Predicted AQI"
+            ]
+            .tolist()
+        )
+
+        render_svg_chart(
+            svg_line_chart(
+                values,
+                labels,
+                title="Air Quality Index",
+                subtitle="Predicted AQI trajectory",
+                height=300
+            ),
+            height=360
+        )
+
+    with alerts_col:
+
+        render_html(
+            """
+            <div class="card">
+
+                <div class="card-title">
+                    Forecast Alerts
+                </div>
+            """
+)
+
+        for _, row in (
+            future_forecast.iterrows()
+        ):
+
+            aqi = float(
+                row["Predicted AQI"]
             )
 
-    # ========================================================
-    # FORECAST TREND
-    # ========================================================
+            render_html(
+                f"""
+                <div
+                    style="
+                    padding:12px 0;
+                    border-bottom:1px solid #252c38;
+                    "
+                >
 
-    st.markdown(
-        '<div class="section-title">'
-        '📈 AQI Forecast Trend'
-        '</div>',
-        unsafe_allow_html=True
-    )
+                    <div
+                        style="
+                        font-size:11px;
+                        color:#7d899c;
+                        "
+                    >
+                        {row["Date"].strftime(
+                            "%d %b %Y"
+                        )}
+                    </div>
 
-    trend_data = future_forecast[
-        ["Date", "Predicted AQI"]
-    ].copy()
+                    <div
+                        style="
+                        margin-top:4px;
+                        color:#ffffff;
+                        font-weight:750;
+                        "
+                    >
 
-    trend_data["Date"] = trend_data[
-        "Date"
-    ].dt.strftime("%d %b")
+                        <span
+                            style="
+                            color:{aqi_color(aqi)};
+                            "
+                        >
+                            ●
+                        </span>
 
-    trend_data = trend_data.set_index(
-        "Date"
-    )
+                        AQI {aqi:.0f}
 
-    st.line_chart(
-        trend_data,
-        use_container_width=True
-    )
+                    </div>
+
+                    <div
+                        style="
+                        font-size:11px;
+                        color:#718097;
+                        margin-top:3px;
+                        "
+                    >
+                        {safe_text(
+                            aqi_category(aqi)
+                        )}
+                    </div>
+
+                </div>
+                """
+)
+
+        render_html(
+            "</div>"
+)
 
     # ========================================================
     # FORECAST DETAILS
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">'
-        '📊 Forecast Details'
-        '</div>',
-        unsafe_allow_html=True
+    render_html(
+        '<div class="section-title">Forecast Details</div>'
+)
+
+    details = future_forecast.copy()
+
+    details["Forecast Date"] = (
+        details["Date"]
+        .dt.strftime("%d %b %Y")
     )
 
-    display_data = future_forecast.copy()
-
-    display_data["Forecast Date"] = display_data[
-        "Date"
-    ].dt.strftime(
-        "%d %b %Y"
+    details["Predicted AQI"] = (
+        details["Predicted AQI"]
+        .round(2)
     )
 
-    display_data["Predicted AQI"] = display_data[
-        "Predicted AQI"
-    ].round(2)
-
-    display_data["AQI Status"] = display_data[
-        "Predicted AQI"
-    ].apply(
-        aqi_emoji
-    )
-
-    display_data["Category"] = display_data[
-        "Predicted AQI"
-    ].apply(
-        aqi_category
+    details["Status"] = (
+        details["Predicted AQI"]
+        .apply(aqi_category)
     )
 
     st.dataframe(
-        display_data[
+        details[
             [
                 "Forecast Date",
                 "Predicted AQI",
-                "AQI Status",
-                "Category"
+                "Status"
             ]
         ],
         use_container_width=True,
@@ -622,17 +1734,16 @@ if page == "Dashboard":
     )
 
     # ========================================================
-    # HISTORICAL AQI
+    # HISTORICAL AIR QUALITY
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">'
-        '📊 Historical Air Quality Analysis'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    render_html(
+        '<div class="section-title">Historical Air Quality</div>'
+)
 
-    if os.path.exists(HISTORICAL_FILE):
+    if os.path.exists(
+        HISTORICAL_FILE
+    ):
 
         try:
 
@@ -640,177 +1751,294 @@ if page == "Dashboard":
                 HISTORICAL_FILE
             )
 
-            historical["Date"] = pd.to_datetime(
-                historical["Date"],
-                errors="coerce"
-            )
+            if "Date" in historical.columns:
 
-            # Find AQI column robustly
-            aqi_column = None
-
-            for possible_column in [
-                "AQI",
-                "aqi",
-                "Air Quality Index"
-            ]:
-
-                if possible_column in historical.columns:
-
-                    aqi_column = possible_column
-                    break
-
-            if aqi_column is not None:
-
-                historical[aqi_column] = pd.to_numeric(
-                    historical[aqi_column],
-                    errors="coerce"
+                historical["Date"] = (
+                    pd.to_datetime(
+                        historical["Date"],
+                        errors="coerce"
+                    )
                 )
 
-                historical = historical.dropna(
-                    subset=[
-                        "Date",
-                        aqi_column
+                hist_col = find_numeric_column(
+                    historical,
+                    [
+                        "AQI",
+                        "aqi",
+                        "Air Quality Index"
                     ]
                 )
 
-                historical_chart = historical[
-                    ["Date", aqi_column]
-                ].copy()
+                if hist_col:
 
-                historical_chart = historical_chart.set_index(
-                    "Date"
-                )
-
-                historical_chart.columns = [
-                    "AQI"
-                ]
-
-                st.line_chart(
-                    historical_chart,
-                    use_container_width=True
-                )
-
-                c1, c2, c3 = st.columns(3)
-
-                with c1:
-
-                    st.metric(
-                        "Average Historical AQI",
-                        f"{historical[aqi_column].mean():.1f}"
+                    hist = (
+                        historical
+                        .dropna(
+                            subset=[
+                                "Date",
+                                hist_col
+                            ]
+                        )
+                        .sort_values("Date")
+                        .tail(90)
                     )
 
-                with c2:
+                    if len(hist) >= 2:
 
-                    st.metric(
-                        "Maximum Historical AQI",
-                        f"{historical[aqi_column].max():.1f}"
-                    )
+                        hist_values = (
+                            pd.to_numeric(
+                                hist[hist_col],
+                                errors="coerce"
+                            )
+                            .tolist()
+                        )
 
-                with c3:
+                        hist_labels = [
+                            date.strftime(
+                                "%d %b"
+                            )
+                            for date in hist["Date"]
+                        ]
 
-                    st.metric(
-                        "Minimum Historical AQI",
-                        f"{historical[aqi_column].min():.1f}"
+                        render_svg_chart(
+                            svg_line_chart(
+                                hist_values,
+                                hist_labels,
+                                title="Historical AQI",
+                                subtitle="Recent historical AQI observations",
+                                height=290
+                            ),
+                            height=350
+                        )
+
+                    else:
+
+                        st.info(
+                            "Not enough historical AQI observations."
+                        )
+
+                else:
+
+                    st.info(
+                        "Historical file does not contain "
+                        "a recognized AQI column."
                     )
 
             else:
 
-                st.warning(
-                    "AQI column could not be identified "
-                    "in historical_aqi.csv."
+                st.info(
+                    "Historical file does not contain a Date column."
                 )
 
-        except Exception as e:
+        except Exception as exc:
 
             st.warning(
-                f"Historical analysis could not be loaded: {e}"
+                f"Historical analysis could not be loaded: {exc}"
             )
 
     else:
 
-        st.warning(
-            "Historical AQI dataset was not found."
+        st.info(
+            "Historical AQI file is not available."
         )
 
     # ========================================================
-    # HOW FORECAST WORKS
+    # HOW IT WORKS
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">'
-        '🔄 How This Forecast Works'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    render_html(
+        '<div class="section-title">How the Forecast Works</div>'
+)
 
-    st.info(
-        """
-        **1. Live environmental data** is collected from weather
-        and air-quality APIs.
+    steps = [
+        (
+            "01",
+            "Data collection",
+            "Weather and air-quality observations are collected from external data sources."
+        ),
+        (
+            "02",
+            "Feature engineering",
+            "Historical pollution, lag variables, weather variables and time-based features are prepared."
+        ),
+        (
+            "03",
+            "Machine learning",
+            "The Random Forest model learns relationships between environmental features and AQI."
+        ),
+        (
+            "04",
+            "Forecast generation",
+            "The trained model generates AQI estimates for the next three future dates."
+        ),
+        (
+            "05",
+            "Explainability",
+            "SHAP analysis identifies the variables that contribute most strongly to model predictions."
+        ),
+    ]
 
-        **2. Historical pollution patterns** are combined with
-        weather and temporal variables.
+    for number, title, description in steps:
 
-        **3. Feature engineering** creates lag variables such as
-        previous-day AQI and PM2.5.
+        render_html(
+            f"""
+            <div
+                class="card"
+                style="
+                margin-bottom:9px;
+                padding:15px 18px;
+                "
+            >
 
-        **4. Random Forest** uses these features to estimate
-        future AQI.
+                <div
+                    style="
+                    color:#22d3ee;
+                    font-size:11px;
+                    font-weight:800;
+                    letter-spacing:1px;
+                    "
+                >
+                    {number}
+                </div>
 
-        **5. The model generates predictions for the next three
-        available future dates.**
+                <div
+                    style="
+                    color:#ffffff;
+                    font-size:14px;
+                    font-weight:800;
+                    margin-top:4px;
+                    "
+                >
+                    {title}
+                </div>
 
-        **6. SHAP analysis explains which variables have the
-        greatest influence on the model's predictions.**
-        """
-    )
+                <div
+                    style="
+                    color:#8895a8;
+                    font-size:12px;
+                    line-height:1.55;
+                    margin-top:4px;
+                    "
+                >
+                    {description}
+                </div>
+
+            </div>
+            """
+)
 
 
 # ============================================================
-# PAGE 2 — MODEL PERFORMANCE
+# MODEL PERFORMANCE
 # ============================================================
 
 elif page == "Model Performance":
 
-    st.markdown(
-        '<div class="section-title">'
-        '🤖 Model Performance & Comparison'
-        '</div>',
-        unsafe_allow_html=True
+    render_html(
+        '<div class="main-title">Model Performance</div>'
+)
+
+    render_html(
+        '<div class="main-subtitle">'
+        'Evaluation and comparison of the forecasting models'
+        '</div>'
+)
+
+    performance = pd.DataFrame(
+        {
+            "Model": [
+                "Random Forest",
+                "Ridge Regression"
+            ],
+            "MAE": [
+                7.57,
+                7.92
+            ],
+            "RMSE": [
+                10.47,
+                10.61
+            ],
+            "R²": [
+                0.729,
+                0.722
+            ]
+        }
     )
 
-    st.write(
-        "Two machine-learning models were evaluated using "
-        "the same chronological train/test methodology."
+    c1, c2, c3 = st.columns(
+        3,
+        gap="medium"
     )
 
-    # ========================================================
-    # PERFORMANCE DATA
-    # ========================================================
+    with c1:
 
-    performance = pd.DataFrame({
+        render_html(
+            """
+            <div class="card">
 
-        "Model": [
-            "Random Forest",
-            "Ridge Regression"
-        ],
+                <div class="card-label">
+                    MAE
+                </div>
 
-        "MAE": [
-            7.57,
-            7.92
-        ],
+                <div class="big-value">
+                    7.57
+                </div>
 
-        "RMSE": [
-            10.47,
-            10.61
-        ],
+                <div class="card-note">
+                    Average absolute AQI error
+                </div>
 
-        "R²": [
-            0.729,
-            0.722
-        ]
+            </div>
+            """
+)
 
-    })
+    with c2:
+
+        render_html(
+            """
+            <div class="card">
+
+                <div class="card-label">
+                    RMSE
+                </div>
+
+                <div class="big-value">
+                    10.47
+                </div>
+
+                <div class="card-note">
+                    Penalizes larger errors
+                </div>
+
+            </div>
+            """
+)
+
+    with c3:
+
+        render_html(
+            """
+            <div class="card">
+
+                <div class="card-label">
+                    R²
+                </div>
+
+                <div class="big-value">
+                    72.9%
+                </div>
+
+                <div class="card-note">
+                    Variation explained
+                </div>
+
+            </div>
+            """
+)
+
+    render_html(
+        '<div class="section-title">Model Comparison</div>'
+)
 
     st.dataframe(
         performance,
@@ -818,415 +2046,356 @@ elif page == "Model Performance":
         hide_index=True
     )
 
-    # ========================================================
-    # KEY METRICS
-    # ========================================================
+    render_html(
+        '<div class="section-title">Selected Model</div>'
+)
 
-    st.markdown(
-        "### 🏆 Final Random Forest Performance"
-    )
+    render_html(
+        """
+        <div class="card">
 
-    col1, col2, col3 = st.columns(3)
+            <div class="card-title">
+                🥇 Random Forest Regressor
+            </div>
 
-    with col1:
+            <div class="alert-text">
 
-        st.metric(
-            "MAE",
-            "7.57 AQI points"
+                Random Forest was selected because it achieved
+                lower MAE, lower RMSE and higher R² than Ridge
+                Regression under the same chronological
+                train/test methodology.
+
+            </div>
+
+        </div>
+        """
+)
+
+    render_html(
+        '<div class="section-title">Metric Interpretation</div>'
+)
+
+    with st.expander(
+        "MAE — Mean Absolute Error"
+    ):
+
+        st.write(
+            "MAE is the average absolute difference between "
+            "predicted and actual AQI. A value of 7.57 means "
+            "the model's predictions differ from actual AQI by "
+            "approximately 7.57 AQI points on average on the "
+            "evaluated data."
         )
 
-    with col2:
+    with st.expander(
+        "RMSE — Root Mean Squared Error"
+    ):
 
-        st.metric(
-            "RMSE",
-            "10.47 AQI points"
+        st.write(
+            "RMSE is the square root of the average squared "
+            "prediction error. Larger errors receive greater "
+            "weight because the errors are squared."
         )
 
-    with col3:
+    with st.expander(
+        "R² — R-squared"
+    ):
 
-        st.metric(
-            "R²",
-            "72.9%"
+        st.write(
+            "R² measures the proportion of variation in the "
+            "test target explained by the regression model. "
+            "The value 0.729 corresponds to approximately "
+            "72.9%."
         )
 
-    # ========================================================
-    # MODEL COMPARISON
-    # ========================================================
+    render_html(
+        '<div class="section-title">Training Information</div>'
+)
 
-    st.markdown(
-        "### 📊 Model Comparison"
+    t1, t2, t3 = st.columns(
+        3,
+        gap="medium"
     )
 
-    st.bar_chart(
-        performance.set_index(
-            "Model"
-        )[[
-            "MAE",
-            "RMSE"
-        ]]
-    )
-
-    # ========================================================
-    # SELECTED MODEL
-    # ========================================================
-
-    st.markdown(
-        "### 🥇 Selected Model"
-    )
-
-    st.success(
-        """
-        **Random Forest Regressor**
-
-        Random Forest was selected as the final forecasting
-        model because it achieved:
-
-        • Lower MAE than Ridge Regression  
-        • Lower RMSE than Ridge Regression  
-        • Higher R² than Ridge Regression  
-
-        Therefore, Random Forest provides the stronger
-        predictive performance for this dataset.
-        """
-    )
-
-    # ========================================================
-    # METRIC EXPLANATION
-    # ========================================================
-
-    st.markdown(
-        "### 📖 Understanding the Metrics"
-    )
-
-    st.write(
-        """
-        **MAE — Mean Absolute Error**
-
-        Measures the average absolute difference between the
-        predicted AQI and actual AQI.
-
-        A value of **7.57** means the model's predictions are
-        off by approximately 7.57 AQI points on average.
-        """
-    )
-
-    st.write(
-        """
-        **RMSE — Root Mean Squared Error**
-
-        Similar to MAE but penalizes larger errors more heavily.
-
-        The model achieved an RMSE of **10.47**.
-        """
-    )
-
-    st.write(
-        """
-        **R² — R-squared**
-
-        Indicates how much variation in AQI is explained by
-        the model.
-
-        An R² of **0.729** means approximately **72.9% of the
-        variation in the test data is explained by the model**.
-        """
-    )
-
-    # ========================================================
-    # TRAINING INFORMATION
-    # ========================================================
-
-    st.markdown(
-        "### 📚 Training Information"
-    )
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-
-        st.metric(
+    training_info = [
+        (
+            t1,
             "Training Samples",
             "992"
-        )
-
-    with c2:
-
-        st.metric(
+        ),
+        (
+            t2,
             "Testing Samples",
             "249"
-        )
-
-    with c3:
-
-        st.metric(
+        ),
+        (
+            t3,
             "Features",
             "20"
         )
+    ]
+
+    for col, label, value in training_info:
+
+        with col:
+
+            render_html(
+                f"""
+                <div class="card">
+
+                    <div class="card-label">
+                        {label}
+                    </div>
+
+                    <div class="big-value">
+                        {value}
+                    </div>
+
+                </div>
+                """
+)
 
 
 # ============================================================
-# PAGE 3 — SHAP
+# MODEL EXPLAINABILITY
 # ============================================================
 
 elif page == "Model Explainability":
 
-    st.markdown(
-        '<div class="section-title">'
-        '🧠 Model Explainability — SHAP Analysis'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    render_html(
+        '<div class="main-title">Model Explainability</div>'
+)
 
-    st.write(
+    render_html(
+        '<div class="main-subtitle">'
+        'SHAP analysis of Random Forest AQI predictions'
+        '</div>'
+)
+
+    render_html(
         """
-        SHAP (SHapley Additive exPlanations) is used to
-        understand which input variables have the greatest
-        influence on the Random Forest model's AQI predictions.
+        <div class="card">
+
+            <div class="card-title">
+                What is SHAP?
+            </div>
+
+            <div class="alert-text">
+
+                SHAP (SHapley Additive exPlanations) is used
+                to understand how individual input variables
+                influence the machine-learning model.
+
+                It improves transparency by showing which
+                features are most influential.
+
+            </div>
+
+        </div>
         """
+)
+
+    shap_data = pd.DataFrame(
+        {
+            "Feature": [
+                "CO",
+                "PM10",
+                "PM2.5_Lag_1",
+                "SO2",
+                "O3",
+                "NO2",
+                "Day of Year",
+                "Pressure",
+                "Humidity",
+                "Temperature_Lag_1",
+                "Humidity_Lag_1",
+                "AQI_Lag_1",
+                "AQI_Lag_3",
+                "Wind Speed",
+                "Min Temperature",
+                "Max Temperature",
+                "AQI_Lag_2",
+                "PM2.5_Lag_2",
+                "Month",
+                "Rain"
+            ],
+            "SHAP Importance": [
+                9.981722,
+                9.109949,
+                4.742373,
+                4.725060,
+                2.401078,
+                0.635882,
+                0.627777,
+                0.588087,
+                0.578203,
+                0.417039,
+                0.284867,
+                0.255873,
+                0.253338,
+                0.226564,
+                0.183873,
+                0.181801,
+                0.170939,
+                0.167632,
+                0.122939,
+                0.060487
+            ]
+        }
     )
 
-    # ========================================================
-    # SHAP IMAGE
-    # ========================================================
-
-    st.markdown(
-        "### 📊 SHAP Feature Importance"
+    left, right = st.columns(
+        [1.35, 1],
+        gap="medium"
     )
 
-    if os.path.exists(SHAP_FILE):
+    with left:
 
-        st.image(
-            SHAP_FILE,
-            use_container_width=True
+        render_html(
+            '<div class="section-title">Feature Importance</div>'
+)
+
+        if os.path.exists(
+            SHAP_FILE
+        ):
+
+            st.image(
+                SHAP_FILE,
+                use_container_width=True
+            )
+
+        else:
+
+            st.info(
+                "SHAP image was not found."
+            )
+
+    with right:
+
+        render_html(
+            '<div class="section-title">Top Model Drivers</div>'
+)
+
+        st.dataframe(
+            shap_data.head(10),
+            use_container_width=True,
+            hide_index=True
         )
 
-    else:
+    render_html(
+        '<div class="section-title">Interpretation</div>'
+)
 
-        st.warning(
-            "SHAP feature importance chart was not found."
-        )
-
-        st.info(
-            "Run shap_analysis.py first."
-        )
-
-    # ========================================================
-    # SHAP DATA
-    # ========================================================
-
-    shap_data = pd.DataFrame({
-
-        "Feature": [
-
-            "CO",
-            "PM10",
-            "PM2.5_Lag_1",
-            "SO2",
-            "O3",
-            "NO2",
-            "Day of Year",
-            "Pressure",
-            "Humidity",
-            "Temperature_Lag_1",
-            "Humidity_Lag_1",
-            "AQI_Lag_1",
-            "AQI_Lag_3",
-            "Wind Speed",
-            "Min Temperature",
-            "Max Temperature",
-            "AQI_Lag_2",
-            "PM2.5_Lag_2",
-            "Month",
-            "Rain"
-
-        ],
-
-        "SHAP Importance": [
-
-            9.981722,
-            9.109949,
-            4.742373,
-            4.725060,
-            2.401078,
-            0.635882,
-            0.627777,
-            0.588087,
-            0.578203,
-            0.417039,
-            0.284867,
-            0.255873,
-            0.253338,
-            0.226564,
-            0.183873,
-            0.181801,
-            0.170939,
-            0.167632,
-            0.122939,
-            0.060487
-
-        ]
-
-    })
-
-    # ========================================================
-    # TOP SHAP FEATURES
-    # ========================================================
-
-    st.markdown(
-        "### 🔍 Top Model Drivers"
-    )
-
-    top_shap = shap_data.head(10)
-
-    st.dataframe(
-        top_shap,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # ========================================================
-    # SHAP BAR CHART
-    # ========================================================
-
-    st.markdown(
-        "### 📈 SHAP Importance Ranking"
-    )
-
-    shap_chart = shap_data.head(10).copy()
-
-    shap_chart = shap_chart.set_index(
-        "Feature"
-    )
-
-    st.bar_chart(
-        shap_chart[
-            "SHAP Importance"
-        ]
-    )
-
-    # ========================================================
-    # INTERPRETATION
-    # ========================================================
-
-    st.markdown(
-        "### 🧠 Interpretation"
-    )
-
-    st.success(
+    render_html(
         """
-        The SHAP analysis shows that **CO, PM10,
-        previous-day PM2.5 and SO2** are among the most
-        influential variables used by the forecasting model.
+        <div class="card">
 
-        This provides transparency into the machine-learning
-        model instead of treating it as a complete black box.
+            <div class="alert-text">
+
+                The strongest contributors in the current
+                SHAP analysis are
+
+                <b style="color:#ffffff;">CO</b>,
+
+                <b style="color:#ffffff;">PM10</b>,
+
+                <b style="color:#ffffff;">
+                    previous-day PM2.5
+                </b>,
+
+                and
+
+                <b style="color:#ffffff;">SO2</b>.
+
+                <br><br>
+
+                SHAP importance indicates model influence
+                rather than causation. A high importance score
+                does not by itself prove that changing a
+                variable causes AQI to change.
+
+            </div>
+
+        </div>
         """
-    )
-
-    st.warning(
-        """
-        **Important:** SHAP importance indicates model influence,
-        not causation. A high SHAP importance does not by itself
-        prove that changing that variable causes AQI to change.
-        """
-    )
-
-    # ========================================================
-    # FEATURE GROUPS
-    # ========================================================
-
-    st.markdown(
-        "### 🌫️ Environmental Variables"
-    )
-
-    st.write(
-        """
-        The strongest contributors include:
-
-        • **CO** — Carbon monoxide  
-        • **PM10** — Particulate matter  
-        • **PM2.5_Lag_1** — Previous-day PM2.5  
-        • **SO2** — Sulphur dioxide  
-        • **O3** — Ozone  
-        • **NO2** — Nitrogen dioxide
-        """
-    )
+)
 
 
 # ============================================================
-# PAGE 4 — PROJECT INFORMATION
+# PROJECT INFORMATION
 # ============================================================
 
 elif page == "Project Information":
 
-    st.markdown(
-        '<div class="section-title">'
-        '📘 AirSense Karachi — Project Overview'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    render_html(
+        '<div class="main-title">Project Information</div>'
+)
 
-    st.write(
+    render_html(
+        '<div class="main-subtitle">'
+        'AirSense Karachi — AI-powered AQI forecasting system'
+        '</div>'
+)
+
+    render_html(
         """
-        AirSense Karachi is a machine-learning based air-quality
-        forecasting system designed to predict Karachi's Air
-        Quality Index for the next three days.
+        <div class="card">
 
-        The system combines historical air-quality patterns,
-        pollution variables, weather conditions and temporal
-        information to generate automated AQI forecasts.
+            <div class="card-title">
+                Project Objective
+            </div>
+
+            <div class="alert-text">
+
+                AirSense Karachi combines historical
+                air-quality patterns, pollution variables,
+                weather conditions and temporal features
+                to generate three-day AQI forecasts for Karachi.
+
+            </div>
+
+        </div>
         """
-    )
+)
 
-    # ========================================================
-    # ARCHITECTURE
-    # ========================================================
-
-    st.markdown(
-        "### 🔄 System Architecture"
-    )
+    render_html(
+        '<div class="section-title">System Architecture</div>'
+)
 
     st.code(
         """
-Weather API
-     +
-Air Quality API
-     ↓
+External APIs
+      ↓
 Raw Environmental Data
-     ↓
+      ↓
 Feature Engineering
-     ↓
+      ↓
 Historical Training Dataset
-     ↓
-Train/Test Split
-     ↓
-Machine Learning Models
-     ├── Random Forest
-     └── Ridge Regression
-     ↓
+      ↓
+Chronological Train / Test Split
+      ↓
+Random Forest + Ridge Regression
+      ↓
 Model Evaluation
-     ↓
+      ↓
 Random Forest Selected
-     ↓
+      ↓
 SHAP Explainability
-     ↓
+      ↓
 Live 3-Day Forecast
-     ↓
-Streamlit Dashboard
+      ↓
+Flask API / Streamlit Dashboard
+      ↓
+GitHub Actions Automation
         """,
         language="text"
     )
 
-    # ========================================================
-    # FEATURES
-    # ========================================================
-
-    st.markdown(
-        "### ⚙️ Model Features"
-    )
+    render_html(
+        '<div class="section-title">Model Features</div>'
+)
 
     feature_list = [
-
         "AQI Lag 1",
         "AQI Lag 2",
         "AQI Lag 3",
@@ -1247,151 +2416,140 @@ Streamlit Dashboard
         "Ozone (O3)",
         "Month",
         "Day of Year"
-
     ]
 
-    for feature in feature_list:
-
-        st.write(
-            f"• {feature}"
-        )
-
-    # ========================================================
-    # PROJECT COMPONENTS
-    # ========================================================
-
-    st.markdown(
-        "### ✅ Project Components"
+    feature_df = pd.DataFrame(
+        {
+            "Model Feature": feature_list
+        }
     )
 
-    components = pd.DataFrame({
-
-        "Component": [
-
-            "Historical Data Collection",
-            "Feature Engineering",
-            "Forecast Training Dataset",
-            "Random Forest Model",
-            "Ridge Regression Model",
-            "Model Evaluation",
-            "Live Weather API",
-            "Live Air Quality API",
-            "Automatic 3-Day Forecast",
-            "SHAP Explainability",
-            "AQI Health Alerts",
-            "Streamlit Dashboard"
-
-        ],
-
-        "Status": [
-
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed",
-            "Completed"
-
-        ]
-
-    })
-
     st.dataframe(
-        components,
+        feature_df,
         use_container_width=True,
         hide_index=True
     )
 
-    # ========================================================
-    # LIMITATIONS
-    # ========================================================
+    render_html(
+        '<div class="section-title">Implemented Components</div>'
+)
 
-    st.markdown(
-        "### ⚠️ Current Limitations"
+    components_table = pd.DataFrame(
+        {
+            "Component": [
+                "Historical Data Collection",
+                "Feature Engineering",
+                "Forecast Training Dataset",
+                "Random Forest Model",
+                "Ridge Regression Model",
+                "Model Evaluation",
+                "Live Weather Data",
+                "Live Air-Quality Data",
+                "Automatic 3-Day Forecast",
+                "SHAP Explainability",
+                "AQI Health Alerts",
+                "Streamlit Dashboard",
+                "GitHub Actions Automation"
+            ],
+            "Status": [
+                "Completed"
+            ] * 13
+        }
     )
 
+    st.dataframe(
+        components_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    render_html(
+        '<div class="section-title">Current Limitations</div>'
+)
+
     limitations = [
-
-        "Forecast accuracy depends on the quality and availability of external API data.",
-
-        "Machine-learning predictions are estimates and should not be treated as official air-quality measurements.",
-
-        "Recursive forecasting can accumulate prediction errors across multiple days.",
-
-        "The current model uses Random Forest and Ridge Regression rather than deep-learning forecasting models.",
-
-        "API availability can affect live forecast generation.",
-
+        "Forecast quality depends on the availability and quality of external data.",
+        "Predictions are estimates and should not be treated as official air-quality measurements.",
+        "Recursive multi-day forecasting can accumulate prediction error.",
+        "The current production model is Random Forest rather than a deep-learning forecasting model.",
+        "API outages can affect live forecast generation.",
         "SHAP explains model behaviour but does not establish causal relationships."
-
     ]
 
     for item in limitations:
 
-        st.write(
-            f"• {item}"
-        )
+        render_html(
+            f"""
+            <div
+                style="
+                color:#aeb9c8;
+                font-size:13px;
+                margin:8px 0;
+                "
+            >
+                • {safe_text(item)}
+            </div>
+            """
+)
 
-    # ========================================================
-    # FUTURE IMPROVEMENTS
-    # ========================================================
-
-    st.markdown(
-        "### 🚀 Future Improvements"
-    )
+    render_html(
+        '<div class="section-title">Future Improvements</div>'
+)
 
     improvements = [
-
-        "Automated hourly forecasting",
-
+        "LSTM / GRU time-series benchmark",
+        "Cloud feature store integration",
         "Automated model retraining",
-
-        "LSTM / GRU time-series models",
-
-        "Additional weather variables",
-
-        "More historical observations",
-
-        "Cloud deployment",
-
-        "Model monitoring",
-
+        "Model monitoring and drift detection",
         "Automated model registry",
-
         "Real-time notifications",
-
-        "Mobile-friendly deployment"
-
+        "Additional environmental variables",
+        "Longer historical training period"
     ]
 
     for item in improvements:
 
-        st.write(
-            f"• {item}"
-        )
+        render_html(
+            f"""
+            <div
+                style="
+                color:#aeb9c8;
+                font-size:13px;
+                margin:8px 0;
+                "
+            >
+                • {safe_text(item)}
+            </div>
+            """
+)
 
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-st.markdown(
+render_html(
     """
-    <div class="footer">
+    <div
+        style="
+        text-align:center;
+        color:#59667a;
+        font-size:11px;
+        margin-top:40px;
+        padding-top:18px;
+        border-top:1px solid #202633;
+        "
+    >
 
-    <b>AirSense Karachi</b><br>
-
-    AI-powered Air Quality Index Forecasting System<br><br>
-
-    Python • Pandas • Scikit-learn • Random Forest • SHAP • Streamlit
+        <b>AirSense Karachi</b>
+        • AI-powered AQI Forecasting System
+        • Python
+        • Pandas
+        • Scikit-learn
+        • Random Forest
+        • SHAP
+        • Streamlit
 
     </div>
-    """,
-    unsafe_allow_html=True
+    """
 )
